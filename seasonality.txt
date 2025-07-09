@@ -1,0 +1,374 @@
+function scores = calMODEL_SEASONALITYscores(runtimeCtxt, modelName, enddate, lag)
+% scores = calMODEL_SEASONALITYscores(runtimeCtxt, modelName, enddate, lag)
+%
+% Generic function to calculate the seasonality signal for the specified
+% model. The calculation is driven by the model returns which are extracted
+% from the model parameters (i.e. those specified in the
+% ‹MODELNAME>_model_params. xml file).
+%
+% Params:
+% runtimeCtxt - usual context structure passed through to AGEngine
+% modelName - the name of the model for which the seasonality scores are
+% to be generated.
+% enddate - the latest date up to which scores are generated
+% lag - optional, defaults to 360 on the assumption of daily input data,
+% specifies the lag to be applied to the final score
+%
+% Implementation Note:
+% Strcitly speaking, the lagging is actually applied to the tstat which is
+% then smoothed and reversed. The final result is equivalent to applying
+% the lagging at the end.
+%
+% 2-Oct-2019: The trunk/qa code was reverted to reflect prod.
+%
+%% parameters
+sigName = 'seasonality';
+signal_start_time = clock;
+capH1 = 252;
+cap = 2;
+hlForwardRet = 66;
+volHl = 252;
+uncontionalHl = 5*252;
+uncontional_min_nobs = 3*252;
+fillup_limit = 3;
+capXS = [-Inf, Inf1:
+demean = 0;
+minNum = 2;
+smooth = 0;
+demean_xs = 1;
+rebase = []:
+vol_process_type = "each_t';
+vol_process_ang = []:
+dashboard_path = ['signals/dashboard/' + modelName + Filesep + sigName + filesep];
+
+% default the lagging to 360 days if not specified 
+if nargin ‹ 4 ll isempty(lag)
+  lag = 360;
+end
+
+% calculate the signal for all assets in the model, but remove assets that are
+% zero_holding in either the model or this particular signal before doing any
+% cross-sectional comparisons (eg BXS-scoring).
+modelNameForAssets = modelName;
+if strcmp(modelName, 'MANFUT');
+  modelNameForAssets = 'CTA';
+elseif strcmp(modelName, 'BC') || strcmp (modelName, 'SBC'):
+  modelNameForAssets = 'XBOND'
+end;
+
+asset_list_name='default';
+if strcmp(modelName, 'USIM6');
+  asset_list_name='all';
+end
+
+if strcmp (mode]Name, 'CTA');
+  asset_ list_name='live';
+end
+
+if stremp(modelName, 'MANFUT");
+  asset list_name='live';
+end
+
+universe = GetAssetList(modelNameForAssets, asset_list_name);
+model_zero_holding = GetAssetList(modelNameForAssets, 'zero_holding', False);
+sig_zero_holding = getfield(GetSignalParams (modelName, sigName), 'zero_holding'); %#ok<GFLD>
+
+if ~isempty(model_zero_holding) || ~isempty(sig_zero_holding)
+  universe_before_xs = setdiff(universe, union (model_zero_holding, sig_zero_holding)) ;
+else
+  % both model and signal zero holdings are empty
+  universe_before_xs = universe;
+end
+
+%% 1-Given raw asset returns for an asset class. for, we construct
+% normalized returns
+
+param = GetModelParams (modelName) ;
+ret = param.returns;
+outSesame (ret, GetPathW([dashboard_path *stepfrauReturns,sv*]))
+
+%first let's construct the template
+ret = removenanc(ret, 'rows');
+
+if strcmp(modelName, *USIM6') || strcmp(modelName, 'PEUIN') || strcmp(modelName, 'MELST') || strcmp(modelName, "MEFT");
+  ret=paranses (param, "daily_return_file');
+  outSesame (ret, GetPathW([dashboard_path 'steplrawReturns.csv']));
+
+template_ret = stemplate [ret.dates(1), enddate], "global_businessdays', ret.header);
+ret = sinsert(ret, template_ret);
+outSesame (ret, GetPathW([dashboard_path *steplrawReturnsIntoTemplates.csv']));
+
+%a. daily returns are capped at -2/+2 standard deviation
+[scores, means, vols] = TSscore(ret, num2str(capHL), num2str(capH]), capH], capH]);
+ret_capped - ret;
+ret_ capped.data = max-cap .* vols.data, ret_ capped.data);
+ret_capped.data = min(cap * vols.data, net_capped,data);
+outSesame(ret_capped, GetPathW([dashboard_path *steplaCappedReturns.csv']));
+
+% b.X5 demean returns in cross-sectional models
+% do not do this CTA/MANFUT
+%if ~stremp(modelNameForAssets, 'CTA') && -strcmp(modelNameForAssets, 'SCTA*) &8 -strcmp(modelName,'BC') && ~strcmp (modelName, 'SBC')
+if ~ismember (modelNameForAssets, {'CTA" 'SCTA'}) && ~ismember (modelName, {'BC' 'SBC' 'SCTRYEMHC'})
+  ret_capped = sintersect (ret_capped, universe_before_xs);
+  [scores, means] = Xscore(ret_capped, minNum, capXs, smooth, demean_xs, rebase, vol_process_type, vol_process_arg);
+  % [scores, means] = XSscore(ret_capped, minNum, capXS, smooth, demean_xs, rebase, vol_process_type, vol_process_arg,false);
+  ret_capped = subtract(ret_capped, means) ;
+  outSesame (net_capped, GetPathW([dashboard_path 'stepla_aXSDemeaned.csv']));
+end;
+
+% b. compute cumulative forward returns (what is forward returns) with a
+% 66 business-day window. (that is sum the returns ahead)
+
+N = length(template_ret.dates);
+
+%find the first return date and nan out all normalizaed return until the
+%day before the first ret date.
+ret capped = sintersect(ret_capped, universe_before_xs);
+template_ret_xs = stemplate([ret.dates(1), enddate], "global_businessdays', ret_capped.header);
+numAssets = length(ret_capped. header) ;
+
+for i=1:numAssets
+  idx = find(~isnan(ret_capped.data(:,i)), 1, *first');
+  if wisempty(idx) ;
+    firstRet(i) = idx;
+  else
+    firstRet(i) = N+10;%to nan out all cumulative sums of 66 days since there is no ret, i.e. chn.
+  end;
+end;
+
+cumulative_forward_ret = template_ret_xs;
+for i=1:N-hlForwardRet;
+  cumulative_forward_ret.data(i,:) = nansum(ret_capped.data(min(i+1,N):min(i+hlForwardRet, N). :),1):
+  %if all is NaN, then set the cumulative ret to be NaN as well;
+  cumulative_forward_ret.data(i, all(isnan(ret_capped.data(min(i+1,N):min(i+hlForwardRet, N), :)), 1)) = NaN;
+end;
+
+%nan out until the day before first net date - 1;
+for 1=1: numAssets
+  cumulative_forward_ret.data(1:min(N,firstRet(1)-2),i) = NaN;
+end;
+
+outSesame(cumulative_forward_ret, GetPathW([dashboard_path *steplbCumulativeForwardReturns.csv']));
+
+% c. smooth the forward returns exponentially with a SD-HL;
+cumulative_forward_ret_smooth = ExpFilter (cumulative_forward_ret, num2str(hlForwardRetSmooth), hlForwardRetSmooth);
+outSesame(cumulative_forward_ret_smooth, GetPathW([dashboard_path *steplcForwardReturnsSmoothed.csv']));
+
+% d. these forward returns are smoothed from both sides (backward and forward) with 5D HL each way
+raw_sig_sml_reverse = Reverse(cumulative_forward_ret_smooth);
+raw sig sm2_reverse = ExpFilter(raw_sig_sml_reverse, num2str(hlForwardRetSmooth), hlForwardRetSmooth);
+cumulative_forward_ret_smooth = Reverse(raw_sig_sm2_reverse);
+outSesame(cumulative_forward_ret_smooth, GetPathW([dashboard_path 'steplc_aForwardReturnsBackwardSmoothed.csv']));
+
+% d. divide the smoothed forward returns with a rolling 252 business-day
+% (denominator is a vol of the smoothed returns?) ; no seed, require min 1Y (252D) of data
+[score tsmean tsvol] = TSscoreNoSeed(cumulative_forward_ret_smooth, volHl, volHl, volHI):
+outSesame(tsvol, GetPathW([dashboard_path 'stepldVol.csv']));
+normalized ret = sdiv(cumulative_forward_ret_smooth, tsvol);
+
+%let's get rid of nan rows:
+normalized_ret = removenanre(normalized_ret, *rows');
+template_ret = stemplate([normalized_ret.dates (1), enddate], 'global_businessdays', normalized_ret.header);
+normalized_ ret = sinsert(normalized_ret, template_ret);
+
+outSesame(normalized_ret, GetPathW([dashboard_path 'stepldNormalized_ret.csv']));
+
+%% 2-
+% a given date t, we compute: Unconditional Returns: Using a template based on business days, for
+% a. the mean and variance with an expanding window that uses a SY HL of
+% 1d. Daily normalized returns are denoted RET(t) for mean and VAR(t); avoid seeding, require min 3Y (756D) of data
+
+[score ret_t vol_t] = TSscoreNoSeed(normalized_ret, uncontionalHl, uncontionalHl, uncontional_min_nobs);
+% var_t = spower(vol_t, 2);
+
+%get rid of the first three years
+
+% ret_t = sdiv(smult(ret_t, vol_t), vol_t);
+% outSesame(var_t, GetPathW([dashboard_path 'step2aUnconditionalVariance.csv']));
+% b. Insert the unconditional mean and variance, and the exponential
+% weights (reference to today), in an ?all days? template, where Feb-29th is removed. Fill-up 3 days.
+
+template_full = stemplate([ret_t.dates(1) enddate], 'alldays', ret_t.header);
+template = template_full;
+idxFeb29 = mod (template.dates, 10000) == 229;
+template.dates (idxFeb29) = [];
+template.data(idxFeb29, :) = [];
+
+%calculate the weights
+weights = template;
+N = length(template.dates);
+
+for i=1:N:
+  weights. data (i,:) = 0.5 ^ ((N-i) / uncontionalH1);
+end;
+
+%nan out the weights when there is no return
+weights = sinsert (sinsert(weights, stemplate(normalized_ret)), template);
+weights = sdiv(weights, nansum(weights.data(: ,1)));
+
+% ret_t = sinsert(ret_t, template);
+  %use the variance VARI = (3wtrt2)/(}wt) ? RET1^2 as specified by SAE in
+  %the recipe
+
+% var_t = subtract (sdiv(
+% nan out the weights when ret_t is NaN
+
+normalized ret_in_template = sinsert (normalized ret, template);
+
+% var_t = template;
+
+%return use our own formula to avoid slight difference between var and
+%scorenoseed For mean:
+numeratori = translate(smult(weights, normalized_ret_in_template), NaN, 0);
+numeratori.data = cumsum (numeratori.data, 1);
+denominatorl = translate(weights, NaN, 0);
+denominatorl.data = cumsum(denominator1.data, 1);
+ret_t = sdiv(numeratori, denominatorl);
+
+vol_t = sinsert(vol_t, template);
+%get rid of the first three years, a trick
+ret_t = sdiv(smult(ret_t, vol_t), vol_t);
+
+outSesame(ret_t, GetPathW([dashboard_path *step2aUnconditionalMeanRet.csv']));
+
+%oop is so slow. Need to do something else
+%
+%for i=1:N;
+%var_t.data(1,:) = nansum(normalized_ret_in_template.data(1:1, :) .^ 2 .* weights.data(1:i, :)) ...
+% I nansum (weights.data (1:i, :)) - ret_t.data(i, :) ^ 2;
+%
+%end;
+
+numerator = translate(smult(weights, spower(normalized_ret_in_template, 2)), NaN, 0);
+numerator,data = cumsum (numerator.data, 1);
+denominator = translate(weights, NaN, 0);
+denominator, data = cumsum (denominator.data, 1);
+
+var_t = subtract(sdiv(numerator, denominator), spower(ret_t, 2));
+% weights,data(isnan(normalized ret in template.data)) = NaN;
+
+% var_t = sinsert(var_t, template);
+var_t.data(isnan(normalized_ret_in_template.data)) = NaN;
+weights= fillup(weights, fillup_limit);
+ret_t= fillup(ret_t, fillup limit);
+var_t- fillup(var_t, fillup_limit);
+
+outSesame(var_t, GetPathW([dashboard_path 'step2bUnconditionalVariance.csv']));
+outSesame (ret_t, GetPathW([dashboard_path 'step2bUnconditionalMeanRet.csv']));
+outSesame(weights, GetPathW([dashboard_path 'step2bUnconditionalweights.csv']));
+
+%% 3-
+Conditional Returns: 
+% a. insert the vol-scaled smoothed forward returns (1.d), and the
+% exponential weights implied by a SY HL, in an Palldays? template, where Feb-29th is removed. Fill up with 3 days.
+normalized_ret_fillup = fillup(normalized_net_in_template, fillup_limit);
+outSesame(normalized_ret_fillup, GetPathW([dashboard_path 'step3aNormalized_ret_fillup.csv'])); 
+
+% b. reshape to have the, 365 days. of the year as columns in a sesame
+% where the years are the sesame.dates.
+% c. compute the mean and variance for the D-th day of month M using the
+% exponential weights, denote RETD,M(t) and VARD,M(t) as the conditional mean and variance for day D in month M;
+% d. reshape back to have a sesame with Palldays? as sesame.dates.
+
+conditional_ret = template;
+conditional_var = template;
+
+suml = template;
+% sum = template;
+sumsql - template;
+% sumsq = template;
+
+weights = translate (weights, NaN, 0);
+for i=1:N;
+  current_date_of_year = nod(conditional_ ret.dates (i), 10000);
+  idx = logical((mod(normalized_ ret_fillup.dates, 10000) == current_date_of_year) ...
+                .* (normalized_ret_ fillup.dates ‹= conditional_ret.dates(i)));
+  conditional_ret.data(i, :) = nansum(normalized_ret_fillup.data(idx, :) * weights.data(idx, :), 1) •/ nansum(weights.data(idx, :));
+
+  %calculate the variance:
+  %conditional_var.data(i,:) = nansum(((normalized_ret_fillup.data(idx, :) - conditional_ret.data(idx, :)) .^ 2) ...
+  %•* weights.data(idx, :), 1) ./ nansum(weights.data(idx, :));
+  %
+  %use the variance VAR1 = (2wtrt2)/(Pwt) ₽ RET1'^2 as specified by SAE in
+  %the recipe
+  conditional_var.data(i,:) = nansum(normalized_ret_fillup.data(idx, :) ^ 2 .* weights.data(idx, :)) ...
+    ./ nansum(weights.data(idx, :)) - conditional_ret.data(i, :) ^ 2;
+
+  %sums
+  suml.data(i,:) = nansum(weights.data(idx, :));
+  sumsql.data(i,:) = nansum(weights.data(idx, :) .^ 2);
+  %sum.data (i,:) = nansum(weights.data(1:i, :));
+  %sumsq.data(i,:) = nansum(weights.data(1:i, :) .^2);
+
+  %if all is NaN, then set the cumulative ret to be NaN as well;
+  conditional_ret.data(i, all(isnan(normalized_ret_fillup.data(idx, :)), 1)) = NaN;
+  conditional_var.data(i, all(isnan(normalized_ret_fillup.data(idx, :)), 1)) = NaN;
+end;
+
+sum = translate(weights, NaN, 0);
+sum.data = cumsum (sum.data, 1) ;
+sumsq = spower(translate(weights, NaN, 0), 2);
+sumsq.data = cumsum(sumsq.data, 1);
+
+outsesame(conditional_ret, GetPathW([dashboard_path 'step3dConditional_ret.csv']));
+outSesame(conditional_var, GetPathW([dashboard path 'step3dConditional_var.csv']));
+outSesame(suml, GetPathW([dashboard_path 'step3dSuml.csv']));
+outSesame(sum, GetPathW([dashboard_path 'step3dSum.csv']));
+outSesame(sumsql, GetPathW([dashboard_path 'step3dSumsql.csv']));
+outSesame(sumsq, GetPathW([dashboard_path 'step3dSumsq-csv']));
+
+%% 4- Signal: use SAE closed form solution to compute the tstat (pasted
+% below)
+retl = conditional_ret;
+ret = ret_t;
+varl = conditional_var;
+var = var_t;
+outSesame(ret1, GetPathW([dashboard_path "step4dRet1.csv']));
+outSesame(ret, GetPathW([dashboard_path "step4dRet.csv']));
+outSesame(var1, GetPathW([dashboard_path 'step4dVar1.csv']));
+outSesame(var, GetPathW([dashboard_path "step4dVar.csv']));
+
+scaler = sadd(smult (sumsql, spower(ssubtract(spower(suml, -1), spower(sum, -1)), 2)), sdiv(ssubtract(sumsq, sumsql), spower(sum, 2)));
+outSesame(scaler, GetPathW([dashboand_path 'stepAscaler.csv"])):
+
+blendvar = sdiv(sadd(smult(spower (suml, 2), varl), smult(spower(sum, 2), var)), ssubtract(sadd(spower (suml, 2), spower(sum, 2)), ...
+  sadd (sumsa, sumsql)));
+outSesame(blendvar, GetPathW([dashboard_path 'step4dBlendvar.csv']));
+
+%tstat as score
+scores = sdiv(sdiv(ssubtract(retl, ret), spower(blendvan, 0.S)), spower(scaler, 0.5));
+scores = Shift(scores, lag) ;
+
+% a. Apply extra smoothing both ways (backuard and forwand) with a 50
+% HL.
+scores = ExpFilter(scores, num2str(hlForwardRetSmooth), hlForwardRetsmooth);
+
+raw_sig sml reverse = Reverse(scores);
+raw_sig_sm2_reverse = ExpFilter(raw_sig_sml_reverse, num2str(hlForwardRetSmooth), hlForwardRetSmooth);
+scores = Reverse(raw_sig_sm2_reverse);
+outSesame(scores, GetPathW([dashboard_path 'step5_scoreForwardBackwardSmoothed.csv']));
+
+%no sinsert by force as this is seasonality signal, dates based.
+
+scores = sinsert(scores, template_full); % bring back Feb 29th
+scores = filldown(scores, 1); %fildown scores from Feb 28th
+% Check if enddate is a Feb 29. If so, then add Feb 29th to the scores.
+%if (mod(enddate, 10000) == 229)
+% scores = extendSesame(scores, 1) ;
+%end
+outSesame(scores, GetPathW(['signals/score/* modelName '_@_score.csv'], sigName));
+
+%% output
+signal_elapsed_time = etime (clock, signal_ start_time);
+fprintf('GMSG %s %s signal took %.0f secs\n* ,modelName, sigName, signal_elapsed_time);
+end
+
+function ses=param2ses(param,var)
+  ses=[];
+  if isfield (param, var)
+    file=GetAgeFile(getfield (param, var));
+    if exist (file, 'file')
+      ses=sesame (file);
+    end
+  end
+end
