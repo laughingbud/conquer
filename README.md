@@ -142,7 +142,9 @@ fig, data = ms.plot_strategy_dashboard(res, md, sig, "XS", data_dir="results/fig
 Cost models: `LinearCostModel(bps)` (default 5 bps) and `SquareRootImpactModel`
 (Almgren-style `half_spread + k·σ·√(Q/ADV)`, AUM-parameterised for capacity).
 Turnover controls live in `StrategyConfig`: `no_trade_band`, `rank_buffer`,
-`trade_rate`. Weekly presets: `DEFAULT_XS_WEEKLY`, `DEFAULT_TS_WEEKLY`.
+`trade_rate`; lag control: `exec_lag`. Frequency presets: `DEFAULT_*_WEEKLY`,
+`DEFAULT_*_DAILY`. `lag_sweep(md, cfg, param="exec_lag"|"gap", periods_per_year=…)`
+stress-tests implementation lag.
 
 ## Implementation & publishing lag
 
@@ -154,6 +156,19 @@ and vol-target leverage is causal (`.shift(1)`). `StrategyConfig.exec_lag` adds
 the slow XS book (0.42 → 0.41 → 0.45 at +0/1/2 months) and decays only gracefully
 for the faster TS/weekly books — the signature of no timing artefact. See the
 notebook appendix and `results/figures/implementation_lag_robustness.png`.
+
+**Running daily.** `DataLoader(freq="D")` builds a trading-day panel (snapshot
+dates are used directly — no weekend/holiday gap rows; dense data is 2022-11→).
+The scraper updates around midday with a close that is **~2 trading sessions old**
+(latency stretches around weekends/holidays), so the daily presets
+(`DEFAULT_XS_DAILY` / `DEFAULT_TS_DAILY`, lookbacks in trading days) default to
+**`exec_lag=2`**. `lag_sweep(md, cfg, param="exec_lag", periods_per_year=252)`
+validates it on the real daily data: net Sharpe is near-flat from 0→10 trading
+days of extra lag, so the 2–3 day latency is immaterial for this slow signal. The
+real cost of going daily is **turnover** (~12×/yr vs ~3.5× monthly) — the
+turnover penalty cuts it ~75% and *improves* net Sharpe, so daily is viable only
+with the penalty on. Drive the lag off the latest file `date`, not the calendar.
+See `results/figures/daily_lag_validation.png`.
 
 ## Caveats
 

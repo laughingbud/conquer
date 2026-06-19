@@ -213,9 +213,15 @@ class DataLoader:
             if len(dense):
                 raw = raw[raw["date"] >= dense.index.min().to_period("M").to_timestamp()]
 
-        # collapse to the period end: keep the last snapshot within each period
-        pcode = self._PERIOD.get(self.freq, self.freq)
-        raw["period"] = raw["date"].dt.to_period(pcode).dt.to_timestamp(how="end").dt.normalize()
+        # collapse to the period end: keep the last snapshot within each period.
+        # For daily ("D"/"B") the snapshot dates *are* the trading days, so we
+        # group on the date itself -- no calendar grid, hence no weekend/holiday
+        # gap rows.
+        if self.freq in ("D", "B"):
+            raw["period"] = raw["date"].dt.normalize()
+        else:
+            pcode = self._PERIOD.get(self.freq, self.freq)
+            raw["period"] = raw["date"].dt.to_period(pcode).dt.to_timestamp(how="end").dt.normalize()
         last = raw.groupby(["period", "symbol"], as_index=False).last()
 
         piv = lambda v: last.pivot(index="period", columns="symbol", values=v).sort_index()
@@ -1041,6 +1047,33 @@ def turnover_penalty_sweep(
     return pd.DataFrame(rows)
 
 
+def lag_sweep(
+    md: MarketData, base_cfg: StrategyConfig,
+    lags: Sequence[int] = (0, 1, 2, 3, 5, 10),
+    param: str = "exec_lag",
+    cost_bps: float = 5.0,
+    periods_per_year: int = MONTHS_PER_YEAR,
+) -> pd.DataFrame:
+    """Sweep an implementation-lag parameter and report performance.
+
+    ``param`` is either ``"exec_lag"`` (act on a signal lagged this many extra
+    periods -- models publishing/implementation delay) or ``"gap"`` (the
+    momentum skip itself). For a daily panel the lag unit is *trading days*, so
+    e.g. ``exec_lag=2`` reproduces "the freshest close I can read is 2 sessions
+    old". A flat Sharpe across lags is evidence the edge is not a timing
+    artefact."""
+    bt = Backtester(md, LinearCostModel(cost_bps), periods_per_year)
+    rows = []
+    for L in lags:
+        cfg = StrategyConfig(**{**base_cfg.__dict__, param: int(L)})
+        sig = build_signal(md, cfg)        # rebuilt per gap; identical across exec_lag
+        m = metrics_from_result(bt.run(sig, cfg))
+        rows.append({param: int(L), "sharpe": m["Sharpe"], "cagr": m["CAGR"],
+                     "ann_vol": m["Ann.Vol"], "maxDD": m["MaxDrawdown"],
+                     "ann_turnover": m["AnnTurnover"]})
+    return pd.DataFrame(rows)
+
+
 # =====================================================================
 # 8. DASHBOARD  (2x3 figure + saved underlying data)
 # =====================================================================
@@ -1334,3 +1367,12 @@ DEFAULT_XS_WEEKLY = StrategyConfig(kind="xs", lookback=52, gap=4, top_pct=0.20,
 DEFAULT_TS_WEEKLY = StrategyConfig(kind="ts", lookback=52, gap=4, ts_threshold=0.0,
                                    vol_window=52, target_vol=0.15, max_leverage=2.0,
                                    vol_lookback=26, vol_halflife=17.0)
+
+# Daily presets (lookbacks/windows in TRADING DAYS; ~252-21 ≈ the 12-1 month
+# window). exec_lag is then the publishing/implementation lag in trading days.
+DEFAULT_XS_DAILY = StrategyConfig(kind="xs", lookback=252, gap=21, top_pct=0.20,
+                                  vol_window=126, target_vol=0.15, max_leverage=2.0,
+                                  vol_lookback=21, vol_halflife=21.0, exec_lag=2)
+DEFAULT_TS_DAILY = StrategyConfig(kind="ts", lookback=252, gap=21, ts_threshold=0.0,
+                                  vol_window=126, target_vol=0.15, max_leverage=2.0,
+                                  vol_lookback=21, vol_halflife=21.0, exec_lag=2)
