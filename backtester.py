@@ -118,6 +118,10 @@ class Backtester:
         else:
             raise ValueError(cfg.kind)
         if cfg.weighting == "signal":
+            # cross-sectional tilt: weight proportional to the name's momentum
+            # rank *within the selected book* (strongest momentum gets the
+            # largest position, the cutoff name the smallest) -- a real
+            # cross-sectional bet, not equal weight. Effective breadth ~0.75*k.
             w = chosen.rank()
             w = w / w.sum()
         else:
@@ -409,25 +413,28 @@ class WalkForwardValidator:
 
 
 
+# Long-only => max_leverage=1.0 (never borrow; vol-targeting only de-risks to cash,
+# so realised vol sits at or below the 15% target). XS is signal-weighted (weight
+# scales with cross-sectional momentum rank); TS is breadth/equal-weighted.
 DEFAULT_XS = StrategyConfig(kind="xs", lookback=12, gap=1, top_pct=0.20,
-                            target_vol=0.15, max_leverage=2.0)
+                            weighting="signal", target_vol=0.15, max_leverage=1.0)
 DEFAULT_TS = StrategyConfig(kind="ts", lookback=12, gap=1, ts_threshold=0.0,
-                            target_vol=0.15, max_leverage=2.0)
+                            target_vol=0.15, max_leverage=1.0)
 
 # Weekly-frequency presets (lookbacks/vol windows expressed in weeks;
 # ~52-4 weeks approximates the monthly 12-1 momentum window).
 DEFAULT_XS_WEEKLY = StrategyConfig(kind="xs", lookback=52, gap=4, top_pct=0.20,
-                                   vol_window=52, target_vol=0.15, max_leverage=2.0,
-                                   vol_lookback=26, vol_halflife=17.0)
+                                   weighting="signal", target_vol=0.15, max_leverage=1.0,
+                                   vol_window=52, vol_lookback=26, vol_halflife=17.0)
 DEFAULT_TS_WEEKLY = StrategyConfig(kind="ts", lookback=52, gap=4, ts_threshold=0.0,
-                                   vol_window=52, target_vol=0.15, max_leverage=2.0,
+                                   vol_window=52, target_vol=0.15, max_leverage=1.0,
                                    vol_lookback=26, vol_halflife=17.0)
 
 # Daily presets (lookbacks/windows in TRADING DAYS; ~252-21 ≈ the 12-1 month
 # window). exec_lag is then the publishing/implementation lag in trading days.
 DEFAULT_XS_DAILY = StrategyConfig(kind="xs", lookback=252, gap=21, top_pct=0.20,
-                                  vol_window=126, target_vol=0.15, max_leverage=2.0,
-                                  vol_lookback=21, vol_halflife=21.0, exec_lag=2)
+                                  weighting="signal", target_vol=0.15, max_leverage=1.0,
+                                  vol_window=126, vol_lookback=21, vol_halflife=21.0, exec_lag=2)
 DEFAULT_TS_DAILY = StrategyConfig(kind="ts", lookback=252, gap=21, ts_threshold=0.0,
-                                  vol_window=126, target_vol=0.15, max_leverage=2.0,
+                                  vol_window=126, target_vol=0.15, max_leverage=1.0,
                                   vol_lookback=21, vol_halflife=21.0, exec_lag=2)

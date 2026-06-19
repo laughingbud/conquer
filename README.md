@@ -51,14 +51,17 @@ jupyter nbconvert --to notebook --execute --inplace momentum_research.ipynb
 # …or just open momentum_research.ipynb and Run All
 ```
 
-## The two strategies (both long-only, monthly rebalance, ~15% vol target)
+## The two strategies (both long-only, **no leverage**, ≤15% vol target)
 
 | | Cross-sectional (XS) | Time-series (TS) |
 |---|---|---|
 | Idea | *relative* strength | *absolute* / trend |
 | Selection | top `top_pct` by risk-adj momentum | names with own momentum > 0 |
-| Sizing | equal-weight, fully invested | breadth-scaled (cash when few trend up) |
-| Risk | vol-targeted to 15% (≤2× leverage) | vol-targeted + automatic de-risking |
+| Sizing | **signal-weighted** (∝ cross-sectional momentum rank) | breadth-scaled (cash when few trend up) |
+| Risk | vol-targeted, **`max_leverage=1`** (≤100% invested, de-risks to cash) | vol-targeted + automatic de-risking |
+
+Long-only with no borrowing: vol-targeting only ever scales *down* toward cash, so
+realised vol sits **at or below ~15%** (it can't lever up in calm regimes).
 
 Both use **risk-adjusted momentum** (trailing 12-1 return ÷ trailing vol).
 
@@ -76,19 +79,19 @@ with extreme winners reverting — the edge is mostly *avoiding losers*. See
 
 | | XS full | TS full | **XS OOS** | **TS OOS** | Benchmark |
 |---|---|---|---|---|---|
-| Sharpe | 0.36 | 0.47 | **0.68** | **0.63** | 0.60 |
-| Ann. vol | 16.0% | 13.6% | 15.2% | 13.4% | 15.6% |
-| CAGR | 4.6% | 5.6% | 9.5% | 7.9% | 8.5% |
-| Max drawdown | −52% | −28% | −24% | −24% | −53% |
-| Calmar | 0.09 | 0.20 | 0.40 | 0.33 | 0.16 |
+| Sharpe | 0.38 | 0.55 | **0.72** | **0.69** | 0.60 |
+| Ann. vol | 13.4% | 8.8% | 12.5% | 8.4% | 15.6% |
+| CAGR | 4.2% | 4.5% | 8.5% | 5.6% | 8.5% |
+| Max drawdown | −45% | −18% | −17% | −19% | −53% |
+| Calmar | 0.09 | 0.25 | 0.50 | 0.29 | 0.16 |
 
-*Net of the realistic cost model (§3 below: FX 15bps gross + data-estimated spread
-+ square-root impact, $100M AUM). OOS = stitched walk-forward out-of-sample
-(adaptive params; period ~2011→ as the 2008–09 crash sits in the first training
-window).* The validated strategies still beat the cap-weighted index on
-risk-adjusted return, mainly through **drawdown control** — the TS book de-risks
-into cash when trend breadth collapses. (On a held USD balance / net-FX, the
-full-sample XS Sharpe recovers to ~0.41.)
+*Long-only, no leverage (`max_leverage=1`), net of the realistic cost model (§3:
+FX 15bps gross + data-estimated spread + square-root impact, $100M AUM). OOS =
+stitched walk-forward out-of-sample.* Realised vols are below 15% because the book
+can't lever up (only de-risk). The validated strategies still beat the cap-weighted
+index on risk-adjusted return, mainly through **drawdown control** — far shallower
+than the index's −53%. (FX dominates cost, so a held USD balance / net-FX recovers
+most of the FX drag.)
 
 Full metric set per strategy (Sharpe, Sortino, Calmar, max drawdown, win rate,
 profit factor, avg win/loss, CAGR, vol, skewness, kurtosis, leverage, turnover,
@@ -129,8 +132,8 @@ costs):
 
 | net Sharpe | monthly | weekly | daily |
 |---|---|---|---|
-| XS | 0.72 (turn 3.4) | **1.31 (6.1)** | 1.07 (12.4) |
-| TS | 0.60 (2.2) | **1.13 (3.0)** | 0.86 (6.3) |
+| XS | 0.75 (turn 3.1) | **1.36 (5.1)** | 1.03 (11.1) |
+| TS | 0.74 (1.0) | **1.07 (1.5)** | 0.93 (3.3) |
 
 Higher frequency captured momentum's faster rotations on this recent bull sample —
 but **weekly is the sweet spot**: daily's edge is eroded by its ~12×/yr turnover and
@@ -214,5 +217,5 @@ See `results/daily/figures/lag_validation.png`.
 ## Caveats
 
 Price-return only (no dividends); ETF-holding value used as a liquidity proxy (not
-true ADV); risk-free rate assumed 0; leverage up to 2× to hit the vol target.
+true ADV); risk-free rate assumed 0; long-only with no leverage (`max_leverage=1`).
 Framework-level research results — not a live trading recommendation.
