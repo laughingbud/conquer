@@ -27,7 +27,9 @@ class StrategyConfig:
     top_pct: float = 0.20            # XS: fraction of universe held long
     ts_threshold: float = 0.0        # TS: hold names with signal above this
     ts_weighting: str = "breadth"    # TS: "breadth" (cash when few trend) or "selected"
-    weighting: str = "equal"         # within-book: "equal" or "signal" (rank-tilt)
+    weighting: str = "equal"         # within-book: "equal" | "signal" (rank-tilt) | "sweet_spot"
+    sweet_peak: Optional[float] = None  # sweet_spot: percentile above which to taper
+                                     # (down-weight extreme winners); default 1 - top_pct/2
     target_vol: float = 0.15         # annualised vol target
     vol_lookback: int = 6            # min periods for ex-ante vol estimate
     vol_halflife: float = 4.0        # EWMA halflife (periods) for vol estimate
@@ -124,6 +126,14 @@ class Backtester:
             # cross-sectional bet, not equal weight. Effective breadth ~0.75*k.
             w = chosen.rank()
             w = w / w.sum()
+        elif cfg.weighting == "sweet_spot":
+            # full weight to the bulk of the winners, then taper the extreme top
+            # (the decile-10 names that mean-revert): w = 1 below the peak
+            # percentile, falling linearly to 0 at the very top of the universe.
+            peak = cfg.sweet_peak if cfg.sweet_peak is not None else 1.0 - cfg.top_pct / 2.0
+            p = s.rank(pct=True).reindex(chosen.index)
+            w = ((1.0 - p) / max(1e-6, 1.0 - peak)).clip(lower=0.0, upper=1.0)
+            w = w / w.sum() if w.sum() > 0 else pd.Series(1.0 / len(chosen), index=chosen.index)
         else:
             w = pd.Series(1.0 / len(chosen), index=chosen.index)
         return w * invest, set(chosen.index)
@@ -417,14 +427,14 @@ class WalkForwardValidator:
 # so realised vol sits at or below the 15% target). XS is signal-weighted (weight
 # scales with cross-sectional momentum rank); TS is breadth/equal-weighted.
 DEFAULT_XS = StrategyConfig(kind="xs", lookback=12, gap=1, top_pct=0.20,
-                            weighting="signal", target_vol=0.15, max_leverage=1.0)
+                            weighting="equal", target_vol=0.15, max_leverage=1.0)
 DEFAULT_TS = StrategyConfig(kind="ts", lookback=12, gap=1, ts_threshold=0.0,
                             target_vol=0.15, max_leverage=1.0)
 
 # Weekly-frequency presets (lookbacks/vol windows expressed in weeks;
 # ~52-4 weeks approximates the monthly 12-1 momentum window).
 DEFAULT_XS_WEEKLY = StrategyConfig(kind="xs", lookback=52, gap=4, top_pct=0.20,
-                                   weighting="signal", target_vol=0.15, max_leverage=1.0,
+                                   weighting="equal", target_vol=0.15, max_leverage=1.0,
                                    vol_window=52, vol_lookback=26, vol_halflife=17.0)
 DEFAULT_TS_WEEKLY = StrategyConfig(kind="ts", lookback=52, gap=4, ts_threshold=0.0,
                                    vol_window=52, target_vol=0.15, max_leverage=1.0,
@@ -433,7 +443,7 @@ DEFAULT_TS_WEEKLY = StrategyConfig(kind="ts", lookback=52, gap=4, ts_threshold=0
 # Daily presets (lookbacks/windows in TRADING DAYS; ~252-21 ≈ the 12-1 month
 # window). exec_lag is then the publishing/implementation lag in trading days.
 DEFAULT_XS_DAILY = StrategyConfig(kind="xs", lookback=252, gap=21, top_pct=0.20,
-                                  weighting="signal", target_vol=0.15, max_leverage=1.0,
+                                  weighting="equal", target_vol=0.15, max_leverage=1.0,
                                   vol_window=126, vol_lookback=21, vol_halflife=21.0, exec_lag=2)
 DEFAULT_TS_DAILY = StrategyConfig(kind="ts", lookback=252, gap=21, ts_threshold=0.0,
                                   vol_window=126, target_vol=0.15, max_leverage=1.0,

@@ -57,13 +57,21 @@ jupyter nbconvert --to notebook --execute --inplace momentum_research.ipynb
 |---|---|---|
 | Idea | *relative* strength | *absolute* / trend |
 | Selection | top `top_pct` by risk-adj momentum | names with own momentum > 0 |
-| Sizing | **signal-weighted** (∝ cross-sectional momentum rank) | breadth-scaled (cash when few trend up) |
+| Sizing | **equal-weight** (robust best; `signal` / `sweet_spot` tilts available) | breadth-scaled (cash when few trend up) |
 | Risk | vol-targeted, **`max_leverage=1`** (≤100% invested, de-risks to cash) | vol-targeted + automatic de-risking |
 
 Long-only with no borrowing: vol-targeting only ever scales *down* toward cash, so
 realised vol sits **at or below ~15%** (it can't lever up in calm regimes).
 
 Both use **risk-adjusted momentum** (trailing 12-1 return ÷ trailing vol).
+
+**Cross-sectional weighting.** XS supports three within-book schemes via `weighting=`:
+`equal` (default), `signal` (∝ cross-sectional momentum rank), and `sweet_spot`
+(equal across the bulk, tapering the extreme winners). Tested at every frequency,
+**equal is the robust best** — `signal` drags monthly (the decile-10 reversal) and
+`sweet_spot` matches equal monthly but is worse + churns more weekly/daily. So the
+cross-sectional edge is the **selection** (holding the top quantile); within-book
+reweighting doesn't add value here. See `results/monthly/figures/xs_weight_schemes.png`.
 
 ## Proving the IC
 
@@ -79,11 +87,11 @@ with extreme winners reverting — the edge is mostly *avoiding losers*. See
 
 | | XS full | TS full | **XS OOS** | **TS OOS** | Benchmark |
 |---|---|---|---|---|---|
-| Sharpe | 0.38 | 0.55 | **0.72** | **0.69** | 0.60 |
-| Ann. vol | 13.4% | 8.8% | 12.5% | 8.4% | 15.6% |
-| CAGR | 4.2% | 4.5% | 8.5% | 5.6% | 8.5% |
-| Max drawdown | −45% | −18% | −17% | −19% | −53% |
-| Calmar | 0.09 | 0.25 | 0.50 | 0.29 | 0.16 |
+| Sharpe | 0.43 | 0.55 | **0.76** | **0.69** | 0.60 |
+| Ann. vol | 13.1% | 8.8% | 12.2% | 8.4% | 15.6% |
+| CAGR | 4.9% | 4.5% | 8.9% | 5.6% | 8.5% |
+| Max drawdown | −44% | −18% | −18% | −19% | −53% |
+| Calmar | 0.11 | 0.25 | 0.51 | 0.29 | 0.16 |
 
 *Long-only, no leverage (`max_leverage=1`), net of the realistic cost model (§3:
 FX 15bps gross + data-estimated spread + square-root impact, $100M AUM). OOS =
@@ -132,7 +140,7 @@ costs):
 
 | net Sharpe | monthly | weekly | daily |
 |---|---|---|---|
-| XS | 0.75 (turn 3.1) | **1.36 (5.1)** | 1.03 (11.1) |
+| XS | 0.81 (turn 2.9) | **1.32 (4.6)** | 1.03 (10.0) |
 | TS | 0.74 (1.0) | **1.07 (1.5)** | 0.93 (3.3) |
 
 Higher frequency captured momentum's faster rotations on this recent bull sample —
