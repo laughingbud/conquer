@@ -61,20 +61,23 @@ rank-IC ≈ 0.010, t ≈ 0.8) — a well-documented post-2008 phenomenon.
 with extreme winners reverting — the edge is mostly *avoiding losers*. See
 `results/figures/ic_analysis.png`.
 
-## Headline results (net of 5 bps costs)
+## Headline results (net of realistic costs)
 
 | | XS full | TS full | **XS OOS** | **TS OOS** | Benchmark |
 |---|---|---|---|---|---|
-| Sharpe | 0.41 | 0.50 | **0.70** | **0.67** | 0.60 |
-| Ann. vol | 16.0% | 13.6% | 15.3% | 13.4% | 15.6% |
-| CAGR | 5.4% | 6.0% | 10.0% | 8.4% | 8.5% |
-| Max drawdown | −51% | −27% | −24% | −24% | −53% |
-| Calmar | 0.11 | 0.22 | 0.43 | 0.35 | 0.16 |
+| Sharpe | 0.36 | 0.47 | **0.68** | **0.63** | 0.60 |
+| Ann. vol | 16.0% | 13.6% | 15.2% | 13.4% | 15.6% |
+| CAGR | 4.6% | 5.6% | 9.5% | 7.9% | 8.5% |
+| Max drawdown | −52% | −28% | −24% | −24% | −53% |
+| Calmar | 0.09 | 0.20 | 0.40 | 0.33 | 0.16 |
 
-*OOS = stitched walk-forward out-of-sample (adaptive params; period ~2011→ as the
-2008–09 crash sits in the first training window).* The validated strategies beat
-the cap-weighted index on risk-adjusted return, mainly through **drawdown
-control** — the TS book de-risks into cash when trend breadth collapses.
+*Net of the realistic cost model (§3 below: FX 15bps gross + data-estimated spread
++ square-root impact, $100M AUM). OOS = stitched walk-forward out-of-sample
+(adaptive params; period ~2011→ as the 2008–09 crash sits in the first training
+window).* The validated strategies still beat the cap-weighted index on
+risk-adjusted return, mainly through **drawdown control** — the TS book de-risks
+into cash when trend breadth collapses. (On a held USD balance / net-FX, the
+full-sample XS Sharpe recovers to ~0.41.)
 
 Full metric set per strategy (Sharpe, Sortino, Calmar, max drawdown, win rate,
 profit factor, avg win/loss, CAGR, vol, skewness, kurtosis, leverage, turnover,
@@ -116,6 +119,23 @@ frequency captured momentum's faster rotations. There the turnover penalty cuts
 weekly turnover ~62% **and lifts net Sharpe 1.41→1.49**. *(Short, momentum-friendly
 sample — indicative, not comparable to the 20-year base case.)*
 
+## Transaction costs (realistic, data-driven)
+
+`RealisticCostModel` = **FX 15 bps** (per conversion) + **commission 0** +
+**half-spread** + **square-root impact**, all per unit of traded notional.
+Spread and impact are estimated from the data: half-spread = `0.01 × daily_vol`
+(the spread-∝-vol shape is supported by the Roll estimator's ~0.8 cross-sectional
+correlation with vol; level calibrated to ~1–3 bps as Roll over-states the level
+at daily frequency), and impact is the Almgren square-root model with ADV proxied
+from `market_value`. `cost_breakdown(...)` decomposes the annual drag.
+
+For monthly XS at $100M the all-in drag is **~1.3%/yr**, of which **FX is ~83%**
+(spread ~9%, impact ~8%). The dominant lever is FX accounting: charged on every
+trade (`fx_on="gross"`, default) it costs ~0.06 Sharpe; charged only on net flows
+when a **USD cash balance is held** (`fx_on="net"`) it nearly vanishes for a
+rotation. Higher-frequency books (weekly/daily) pay proportionally more, so the
+turnover penalty is essential there. See `results/figures/cost_model.png`.
+
 ## Dashboards (2×3 per strategy)
 
 `results/figures/{xs,ts}_momentum_dashboard.png` — growth of \$1, drawdowns,
@@ -130,17 +150,20 @@ import momentum_strategies as ms
 md   = ms.DataLoader("data").load()                       # or freq="W" for weekly
 sig  = ms.build_signal(md, ms.DEFAULT_XS)                 # risk-adjusted momentum
 ic   = ms.information_coefficient(sig, md.returns)        # mean IC, t-stat, hit rate
-bt   = ms.Backtester(md, ms.LinearCostModel(5.0))         # periods_per_year=52 for weekly
+cost = ms.RealisticCostModel(fx_bps=15.0, aum=1e8)        # FX + spread + impact
+bt   = ms.Backtester(md, cost)                            # periods_per_year=52 for weekly
 res  = bt.run(sig, ms.DEFAULT_XS)
 m    = ms.metrics_from_result(res)                        # full metric Series
+bd   = ms.cost_breakdown(md, sig, ms.DEFAULT_XS, fx_bps=15)  # fx/spread/impact drag
 cur  = ms.save_weights(res, "results/weights/xs_momentum", sectors=md.sectors)  # current book
 sweep = ms.turnover_penalty_sweep(md, sig, ms.DEFAULT_XS)  # turnover/Sharpe trade-off
 wf   = ms.WalkForwardValidator(bt, ms.DEFAULT_XS, {"top_pct":[0.1,0.2,0.3]}).run()
 fig, data = ms.plot_strategy_dashboard(res, md, sig, "XS", data_dir="results/figure_data")
 ```
 
-Cost models: `LinearCostModel(bps)` (default 5 bps) and `SquareRootImpactModel`
-(Almgren-style `half_spread + k·σ·√(Q/ADV)`, AUM-parameterised for capacity).
+Cost models: `LinearCostModel(bps)`, `SquareRootImpactModel` (Almgren, for
+capacity), and `RealisticCostModel` (FX + commission + data-estimated spread +
+impact; `fx_on="gross"|"net"`).
 Turnover controls live in `StrategyConfig`: `no_trade_band`, `rank_buffer`,
 `trade_rate`; lag control: `exec_lag`. Frequency presets: `DEFAULT_*_WEEKLY`,
 `DEFAULT_*_DAILY`. `lag_sweep(md, cfg, param="exec_lag"|"gap", periods_per_year=…)`

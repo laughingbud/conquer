@@ -535,14 +535,86 @@ class SquareRootImpactModel:
         adv = adv.where(adv > 0)
         participation = (q / adv).clip(upper=1.0).fillna(0.5)
         if name_vol is not None:
+            # name_vol is ANNUALISED -> daily vol = annualised / sqrt(252)
             sig = name_vol.reindex(traded.index).fillna(name_vol.median())
-            sig_daily = sig / np.sqrt(21.0)
+            sig_daily = sig / np.sqrt(252.0)
         else:
-            sig_daily = pd.Series(0.02, index=traded.index)
+            sig_daily = pd.Series(0.015, index=traded.index)
         half_spread = self.half_spread_bps * 1e-4
         c_i = half_spread + self.impact_coef * sig_daily * np.sqrt(participation)
         # notional-weighted average cost as a fraction of NAV
         return float((traded * c_i).sum())
+
+
+class RealisticCostModel:
+    """All-in transaction cost = FX + commission + half-spread + market impact,
+    calibrated to the brief and estimated from the provided data.
+
+    Components, each charged per unit of traded notional and summed over names:
+
+    * **FX** (``fx_bps``, default 15) -- currency conversion for a non-USD
+      investor trading USD-denominated S&P names. By default charged on *gross*
+      trades (broker auto-converts each trade); ``fx_on="net"`` charges only the
+      net currency flow (a USD cash balance is held, so rotations need no
+      conversion -- usually far cheaper, since for a fully-invested rotation
+      buys ~ sells).
+    * **commission** (``commission_bps``, default 0).
+    * **half-spread** = ``spread_vol_coef * daily_vol_i`` clipped to
+      ``[min_hs_bps, max_hs_bps]``. The proportional-to-volatility form is
+      strongly supported by the data (cross-sectional corr of the Roll spread
+      estimator with daily vol ~0.8); the *level* is calibrated to realistic
+      S&P large-cap effective spreads (~1-3 bps half-spread), because the Roll
+      estimator over-states the absolute level at daily frequency.
+    * **impact** -- Almgren square-root model (``SquareRootImpactModel``),
+      proxying ADV from market cap and scaling with ``aum``.
+
+    All cost components are subtracted from returns; they do not feed back into
+    position sizing, so the per-component drag is exactly additive
+    (see :func:`cost_breakdown`).
+    """
+
+    def __init__(self, fx_bps: float = 15.0, commission_bps: float = 0.0,
+                 fx_on: str = "gross", spread_vol_coef: float = 0.01,
+                 min_hs_bps: float = 0.5, max_hs_bps: float = 10.0,
+                 aum: float = 1e8, impact_coef: float = 0.1,
+                 adv_turnover: float = 0.005, exec_days: float = 5.0):
+        self.fx_bps = fx_bps
+        self.commission_bps = commission_bps
+        self.fx_on = fx_on
+        self.spread_vol_coef = spread_vol_coef
+        self.min_hs = min_hs_bps * 1e-4
+        self.max_hs = max_hs_bps * 1e-4
+        self.aum = aum
+        self._impact = SquareRootImpactModel(
+            aum=aum, half_spread_bps=0.0, impact_coef=impact_coef,
+            adv_turnover=adv_turnover, exec_days=exec_days)
+
+    def components(self, dweights: pd.Series, mktcap=None, name_vol=None) -> Dict[str, float]:
+        traded = dweights.abs()
+        traded = traded[traded > 0]
+        if traded.empty:
+            return {"fx": 0.0, "commission": 0.0, "spread": 0.0, "impact": 0.0}
+        gross = float(traded.sum())
+        net = abs(float(dweights.sum()))
+        fx_base = net if self.fx_on == "net" else gross
+        if self.spread_vol_coef > 0:
+            if name_vol is not None:
+                sig_d = name_vol.reindex(traded.index).fillna(name_vol.median()) / np.sqrt(252.0)
+            else:
+                sig_d = pd.Series(0.015, index=traded.index)
+            hs = (self.spread_vol_coef * sig_d).clip(lower=self.min_hs, upper=self.max_hs)
+            spread = float((traded * hs).sum())
+        else:
+            spread = 0.0                      # spread explicitly off (e.g. decomposition)
+        return {
+            "fx": self.fx_bps * 1e-4 * fx_base,
+            "commission": self.commission_bps * 1e-4 * gross,
+            "spread": spread,
+            "impact": self._impact.cost(dweights, mktcap=mktcap, name_vol=name_vol),
+        }
+
+    def cost(self, dweights: pd.Series, mktcap=None, name_vol=None, **_) -> float:
+        return float(sum(self.components(dweights, mktcap, name_vol).values()))
 
 
 # =====================================================================
@@ -1016,10 +1088,12 @@ def turnover_penalty_sweep(
     settings: Optional[Sequence[dict]] = None,
     cost_bps: float = 5.0,
     periods_per_year: int = MONTHS_PER_YEAR,
+    cost_model: Optional[object] = None,
 ) -> pd.DataFrame:
     """Sweep cost-aware rebalancing settings (no-trade band / rank buffer /
     trade rate) and report turnover, cost drag and net Sharpe for each. Shows
-    that penalising turnover cuts cost with little (or positive) net impact."""
+    that penalising turnover cuts cost with little (or positive) net impact.
+    Pass ``cost_model`` (e.g. a RealisticCostModel) to override the flat bps."""
     if settings is None:
         # no_trade_band is in units of "average positions"
         settings = [
@@ -1030,7 +1104,7 @@ def turnover_penalty_sweep(
             {"label": "band 0.5x + buffer 50%", "no_trade_band": 0.5, "rank_buffer": 0.5, "trade_rate": 1.0},
             {"label": "trade rate 50%", "no_trade_band": 0.0, "rank_buffer": 0.0, "trade_rate": 0.5},
         ]
-    bt = Backtester(md, LinearCostModel(cost_bps), periods_per_year)
+    bt = Backtester(md, cost_model or LinearCostModel(cost_bps), periods_per_year)
     rows = []
     for st in settings:
         c = StrategyConfig(**{**cfg.__dict__,
@@ -1053,6 +1127,7 @@ def lag_sweep(
     param: str = "exec_lag",
     cost_bps: float = 5.0,
     periods_per_year: int = MONTHS_PER_YEAR,
+    cost_model: Optional[object] = None,
 ) -> pd.DataFrame:
     """Sweep an implementation-lag parameter and report performance.
 
@@ -1062,7 +1137,7 @@ def lag_sweep(
     e.g. ``exec_lag=2`` reproduces "the freshest close I can read is 2 sessions
     old". A flat Sharpe across lags is evidence the edge is not a timing
     artefact."""
-    bt = Backtester(md, LinearCostModel(cost_bps), periods_per_year)
+    bt = Backtester(md, cost_model or LinearCostModel(cost_bps), periods_per_year)
     rows = []
     for L in lags:
         cfg = StrategyConfig(**{**base_cfg.__dict__, param: int(L)})
@@ -1072,6 +1147,27 @@ def lag_sweep(
                      "ann_vol": m["Ann.Vol"], "maxDD": m["MaxDrawdown"],
                      "ann_turnover": m["AnnTurnover"]})
     return pd.DataFrame(rows)
+
+
+def cost_breakdown(md: MarketData, signal: pd.DataFrame, cfg: StrategyConfig,
+                   periods_per_year: int = MONTHS_PER_YEAR,
+                   **model_kwargs) -> pd.Series:
+    """Annualised cost drag (fraction/yr) of a :class:`RealisticCostModel` split
+    by component. Costs don't affect the trades, so components are exactly
+    additive -- we isolate each by zeroing the others' rates."""
+    isolations = {
+        "fx":         {"commission_bps": 0, "spread_vol_coef": 0, "impact_coef": 0},
+        "commission": {"fx_bps": 0, "spread_vol_coef": 0, "impact_coef": 0},
+        "spread":     {"fx_bps": 0, "commission_bps": 0, "impact_coef": 0},
+        "impact":     {"fx_bps": 0, "commission_bps": 0, "spread_vol_coef": 0},
+    }
+    out = {}
+    for comp, override in isolations.items():
+        m = RealisticCostModel(**{**model_kwargs, **override})
+        out[comp] = metrics_from_result(
+            Backtester(md, m, periods_per_year).run(signal, cfg))["AnnTCost"]
+    out["total"] = float(sum(out.values()))
+    return pd.Series(out, name="ann_cost_drag")
 
 
 # =====================================================================
