@@ -3,14 +3,25 @@
 Two long-only S&P 500 momentum strategies, built, IC-tested, vol-targeted,
 cost-aware, and validated out-of-sample with walk-forward analysis.
 
-* **`momentum_strategies.py`** — the central module: *all* classes and functions
-  (data layer, signals, IC, cost models, backtester, walk-forward validator,
-  metrics, dashboards).
-* **`momentum_research.ipynb`** — runs the module end-to-end and shows results
-  (already executed; outputs embedded).
-* **`results/`** — saved `figures/`, `metrics/` (CSV + JSON), `figure_data/`
-  (the data behind every chart panel), and `weights/` (current + full-history
-  portfolio weights).
+**Code** is split into specialised modules (with `momentum_strategies.py` kept as a
+thin aggregator that re-exports everything, so `import momentum_strategies as ms`
+still works):
+
+| file | contents |
+|---|---|
+| `data.py` | `DataLoader`, `MarketData` — point-in-time panels (monthly/weekly/daily) |
+| `signals.py` | momentum signals + Information Coefficient |
+| `costs.py` | `LinearCostModel`, `SquareRootImpactModel`, `RealisticCostModel` |
+| `backtester.py` | `StrategyConfig`, `Backtester`, metrics, walk-forward, presets |
+| `analytics.py` | sweeps, 2×3 dashboards, weights/metrics I/O |
+| `momentum_strategies.py` | aggregator (`from data import *`, …) |
+
+* **`momentum_research.ipynb`** — organised **by rebalance frequency** (shared
+  signal/cost setup → Monthly / Weekly / Daily → cross-frequency comparison);
+  already executed, outputs embedded.
+* **`results/`** — organised by frequency: `shared/` (signal, costs, data),
+  `monthly/ weekly/ daily/` (each with `figures/ figure_data/ metrics/ weights/`),
+  and `comparison/` (cross-frequency table + figure).
 
 ## Data
 
@@ -59,7 +70,7 @@ rank-IC ≈ 0.010, t ≈ 0.8) — a well-documented post-2008 phenomenon.
 3–6 month horizon (t ≈ 1.8), and a **blended 3/6/12m signal is significant at 6m
 (t ≈ 2.1)**. The decile sort is near-monotonic (losers ≈ 5.7%/yr → winners ≈ 11%),
 with extreme winners reverting — the edge is mostly *avoiding losers*. See
-`results/figures/ic_analysis.png`.
+`results/shared/figures/ic_analysis.png`.
 
 ## Headline results (net of realistic costs)
 
@@ -82,12 +93,12 @@ full-sample XS Sharpe recovers to ~0.41.)
 Full metric set per strategy (Sharpe, Sortino, Calmar, max drawdown, win rate,
 profit factor, avg win/loss, CAGR, vol, skewness, kurtosis, leverage, turnover,
 transaction cost) — for the full sample, the **turnover-penalty-enhanced**
-variant, and the **walk-forward OOS** — is in `results/metrics/strategy_metrics.csv`.
+variant, and the **walk-forward OOS** — is in `results/<freq>/metrics/metrics.csv`.
 
 ## Portfolio weights output
 
 The actual held book is tracked every period. `save_weights(res, prefix)` writes
-the **current (latest-rebalance) portfolio** (`results/weights/{strat}_latest_weights.csv`
+the **current (latest-rebalance) portfolio** (`results/<freq>/weights/{strat}_latest_weights.csv`
 — ticker, weight, % of invested, sector) and the **full history**
 (`..._weights_history.csv`). Weights are post-vol-target, so they sum to the
 current gross exposure. `res.current_weights()` returns the live book in code.
@@ -108,16 +119,23 @@ rank buffer **improves net Sharpe 0.42→0.43 while cutting turnover ~27%**; ban
 buffer cuts turnover ~44% at roughly neutral net Sharpe. The benefit grows with
 frequency — see below.
 
-## Weekly rebalance (§8 in the notebook)
+## Frequency comparison (notebook §4–§7)
 
-The scraper switched to **daily** snapshots in late-2022, so weekly rebalancing is
-studied on ~2022-11 → 2026-06. `DataLoader(freq="W")` builds a weekly panel (it
-auto-restricts to the dense period); the `Backtester(periods_per_year=52)` makes
-the whole engine frequency-agnostic. On a fair **same-window** comparison, weekly
-XS (Sharpe 1.41, CAGR 20%) beat monthly (0.77, 12%) at ~2× turnover — higher
-frequency captured momentum's faster rotations. There the turnover penalty cuts
-weekly turnover ~62% **and lifts net Sharpe 1.41→1.49**. *(Short, momentum-friendly
-sample — indicative, not comparable to the 20-year base case.)*
+`DataLoader(freq="W"|"D")` builds weekly (W-FRI) / trading-day panels and
+`Backtester(periods_per_year=…)` makes the whole engine frequency-agnostic; the
+notebook runs the identical pipeline at each frequency via one `run_frequency`
+helper. On a fair **same-window** comparison (~2022-11→2026-06, net of realistic
+costs):
+
+| net Sharpe | monthly | weekly | daily |
+|---|---|---|---|
+| XS | 0.72 (turn 3.4) | **1.31 (6.1)** | 1.07 (12.4) |
+| TS | 0.60 (2.2) | **1.13 (3.0)** | 0.86 (6.3) |
+
+Higher frequency captured momentum's faster rotations on this recent bull sample —
+but **weekly is the sweet spot**: daily's edge is eroded by its ~12×/yr turnover and
+~4.3%/yr cost. *(Short, momentum-friendly sample — indicative, not comparable to the
+20-year monthly base case.)*
 
 ## Transaction costs (realistic, data-driven)
 
@@ -134,14 +152,14 @@ For monthly XS at $100M the all-in drag is **~1.3%/yr**, of which **FX is ~83%**
 trade (`fx_on="gross"`, default) it costs ~0.06 Sharpe; charged only on net flows
 when a **USD cash balance is held** (`fx_on="net"`) it nearly vanishes for a
 rotation. Higher-frequency books (weekly/daily) pay proportionally more, so the
-turnover penalty is essential there. See `results/figures/cost_model.png`.
+turnover penalty is essential there. See `results/shared/figures/cost_model.png`.
 
 ## Dashboards (2×3 per strategy)
 
-`results/figures/{xs,ts}_momentum_dashboard.png` — growth of \$1, drawdowns,
+`results/{monthly,weekly,daily}/figures/{xs,ts}_momentum_dashboard.png` — growth of \$1, drawdowns,
 rolling Sharpe, per-asset Sharpe distribution, Sharpe-vs-transaction-cost, and
 capacity (square-root market-impact model swept over AUM). Underlying data for
-each panel is in `results/figure_data/{slug}_panel{1..6}_*.csv`.
+each panel is in `results/<freq>/figure_data/{slug}_panel{1..6}_*.csv`.
 
 ## Module API (quick reference)
 
@@ -155,7 +173,7 @@ bt   = ms.Backtester(md, cost)                            # periods_per_year=52 
 res  = bt.run(sig, ms.DEFAULT_XS)
 m    = ms.metrics_from_result(res)                        # full metric Series
 bd   = ms.cost_breakdown(md, sig, ms.DEFAULT_XS, fx_bps=15)  # fx/spread/impact drag
-cur  = ms.save_weights(res, "results/weights/xs_momentum", sectors=md.sectors)  # current book
+cur  = ms.save_weights(res, "results/monthly/weights/xs_momentum", sectors=md.sectors)  # current book
 sweep = ms.turnover_penalty_sweep(md, sig, ms.DEFAULT_XS)  # turnover/Sharpe trade-off
 wf   = ms.WalkForwardValidator(bt, ms.DEFAULT_XS, {"top_pct":[0.1,0.2,0.3]}).run()
 fig, data = ms.plot_strategy_dashboard(res, md, sig, "XS", data_dir="results/figure_data")
@@ -177,8 +195,8 @@ are formed with a full period of buffer (publishing lag absorbed many times over
 and vol-target leverage is causal (`.shift(1)`). `StrategyConfig.exec_lag` adds
 *extra* whole-period lag to stress-test timing: net Sharpe is essentially flat for
 the slow XS book (0.42 → 0.41 → 0.45 at +0/1/2 months) and decays only gracefully
-for the faster TS/weekly books — the signature of no timing artefact. See the
-notebook appendix and `results/figures/implementation_lag_robustness.png`.
+for the faster TS/weekly/daily books — the signature of no timing artefact. The
+daily section validates this on real daily data (see below).
 
 **Running daily.** `DataLoader(freq="D")` builds a trading-day panel (snapshot
 dates are used directly — no weekend/holiday gap rows; dense data is 2022-11→).
@@ -191,7 +209,7 @@ days of extra lag, so the 2–3 day latency is immaterial for this slow signal. 
 real cost of going daily is **turnover** (~12×/yr vs ~3.5× monthly) — the
 turnover penalty cuts it ~75% and *improves* net Sharpe, so daily is viable only
 with the penalty on. Drive the lag off the latest file `date`, not the calendar.
-See `results/figures/daily_lag_validation.png`.
+See `results/daily/figures/lag_validation.png`.
 
 ## Caveats
 
