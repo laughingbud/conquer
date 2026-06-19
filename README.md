@@ -1,0 +1,162 @@
+# Long-Only Equity Momentum — Cross-Sectional & Time-Series
+
+Two long-only S&P 500 momentum strategies, built, IC-tested, vol-targeted,
+cost-aware, and validated out-of-sample with walk-forward analysis.
+
+* **`momentum_strategies.py`** — the central module: *all* classes and functions
+  (data layer, signals, IC, cost models, backtester, walk-forward validator,
+  metrics, dashboards).
+* **`momentum_research.ipynb`** — runs the module end-to-end and shows results
+  (already executed; outputs embedded).
+* **`results/`** — saved `figures/`, `metrics/` (CSV + JSON), `figure_data/`
+  (the data behind every chart panel), and `weights/` (current + full-history
+  portfolio weights).
+
+## Data
+
+iShares Core S&P 500 ETF (IVV) **monthly holdings snapshots** from
+[riazarbi/sp500-scraper](https://github.com/riazarbi/sp500-scraper). Each
+snapshot lists every holding with a market `price`, so stacking ~20 years of
+snapshots (Oct-2006 → Jun-2026, ~502 names/month) yields a **point-in-time price
+panel**. Using the *actual* historical constituents makes the universe
+**survivorship-bias-free**. Only `asset_class == "Equity"` rows are kept; the two
+supplementary scraper sources (`tidyquant`, `wikipedia`) are not needed.
+
+```python
+# one-time download (≈120 MB) into data/ishares/...
+ms.DataLoader("data").download()
+md = ms.DataLoader("data").load()     # parses, cleans splits, caches to data/ishares_panels_ME.pkl
+```
+
+> Prices are **un-adjusted**, so splits are detected via the `shares` column (a
+> clean share-count jump with an offsetting price move) and de-split. Returns are
+> **price-return only** (no dividends → ~1.5–2%/yr understated vs total return).
+
+## Run it
+
+```bash
+pip install pandas numpy scipy matplotlib           # (jupyter to view/edit)
+jupyter nbconvert --to notebook --execute --inplace momentum_research.ipynb
+# …or just open momentum_research.ipynb and Run All
+```
+
+## The two strategies (both long-only, monthly rebalance, ~15% vol target)
+
+| | Cross-sectional (XS) | Time-series (TS) |
+|---|---|---|
+| Idea | *relative* strength | *absolute* / trend |
+| Selection | top `top_pct` by risk-adj momentum | names with own momentum > 0 |
+| Sizing | equal-weight, fully invested | breadth-scaled (cash when few trend up) |
+| Risk | vol-targeted to 15% (≤2× leverage) | vol-targeted + automatic de-risking |
+
+Both use **risk-adjusted momentum** (trailing 12-1 return ÷ trailing vol).
+
+## Proving the IC
+
+Raw price momentum has *weak* cross-sectional IC in large-cap S&P names (mean
+rank-IC ≈ 0.010, t ≈ 0.8) — a well-documented post-2008 phenomenon.
+**Risk-adjusting roughly doubles it** (IC ≈ 0.015, t ≈ 1.2 at 1m), it peaks at the
+3–6 month horizon (t ≈ 1.8), and a **blended 3/6/12m signal is significant at 6m
+(t ≈ 2.1)**. The decile sort is near-monotonic (losers ≈ 5.7%/yr → winners ≈ 11%),
+with extreme winners reverting — the edge is mostly *avoiding losers*. See
+`results/figures/ic_analysis.png`.
+
+## Headline results (net of 5 bps costs)
+
+| | XS full | TS full | **XS OOS** | **TS OOS** | Benchmark |
+|---|---|---|---|---|---|
+| Sharpe | 0.41 | 0.50 | **0.70** | **0.67** | 0.60 |
+| Ann. vol | 16.0% | 13.6% | 15.3% | 13.4% | 15.6% |
+| CAGR | 5.4% | 6.0% | 10.0% | 8.4% | 8.5% |
+| Max drawdown | −51% | −27% | −24% | −24% | −53% |
+| Calmar | 0.11 | 0.22 | 0.43 | 0.35 | 0.16 |
+
+*OOS = stitched walk-forward out-of-sample (adaptive params; period ~2011→ as the
+2008–09 crash sits in the first training window).* The validated strategies beat
+the cap-weighted index on risk-adjusted return, mainly through **drawdown
+control** — the TS book de-risks into cash when trend breadth collapses.
+
+Full metric set per strategy (Sharpe, Sortino, Calmar, max drawdown, win rate,
+profit factor, avg win/loss, CAGR, vol, skewness, kurtosis, leverage, turnover,
+transaction cost) — for the full sample, the **turnover-penalty-enhanced**
+variant, and the **walk-forward OOS** — is in `results/metrics/strategy_metrics.csv`.
+
+## Portfolio weights output
+
+The actual held book is tracked every period. `save_weights(res, prefix)` writes
+the **current (latest-rebalance) portfolio** (`results/weights/{strat}_latest_weights.csv`
+— ticker, weight, % of invested, sector) and the **full history**
+(`..._weights_history.csv`). Weights are post-vol-target, so they sum to the
+current gross exposure. `res.current_weights()` returns the live book in code.
+
+## Transaction-cost-aware turnover penalty
+
+Three cost-aware rebalancing controls in `StrategyConfig`, applied in the
+sequential backtester:
+
+* `no_trade_band` — skip per-name trades smaller than *X× the average position*
+  (auto-scales to book breadth; full entries/exits always clear it).
+* `rank_buffer` — XS hysteresis: keep a held name until it falls past the wider
+  `top_pct·(1+buffer)` rank (kills the name-churn that dominates momentum turnover).
+* `trade_rate` — execute only a fraction of the gap toward target (partial step).
+
+`turnover_penalty_sweep(md, sig, cfg)` quantifies the trade-off. Monthly: a 50%
+rank buffer **improves net Sharpe 0.42→0.43 while cutting turnover ~27%**; band +
+buffer cuts turnover ~44% at roughly neutral net Sharpe. The benefit grows with
+frequency — see below.
+
+## Weekly rebalance (§8 in the notebook)
+
+The scraper switched to **daily** snapshots in late-2022, so weekly rebalancing is
+studied on ~2022-11 → 2026-06. `DataLoader(freq="W")` builds a weekly panel (it
+auto-restricts to the dense period); the `Backtester(periods_per_year=52)` makes
+the whole engine frequency-agnostic. On a fair **same-window** comparison, weekly
+XS (Sharpe 1.41, CAGR 20%) beat monthly (0.77, 12%) at ~2× turnover — higher
+frequency captured momentum's faster rotations. There the turnover penalty cuts
+weekly turnover ~62% **and lifts net Sharpe 1.41→1.49**. *(Short, momentum-friendly
+sample — indicative, not comparable to the 20-year base case.)*
+
+## Dashboards (2×3 per strategy)
+
+`results/figures/{xs,ts}_momentum_dashboard.png` — growth of \$1, drawdowns,
+rolling Sharpe, per-asset Sharpe distribution, Sharpe-vs-transaction-cost, and
+capacity (square-root market-impact model swept over AUM). Underlying data for
+each panel is in `results/figure_data/{slug}_panel{1..6}_*.csv`.
+
+## Module API (quick reference)
+
+```python
+import momentum_strategies as ms
+md   = ms.DataLoader("data").load()                       # or freq="W" for weekly
+sig  = ms.build_signal(md, ms.DEFAULT_XS)                 # risk-adjusted momentum
+ic   = ms.information_coefficient(sig, md.returns)        # mean IC, t-stat, hit rate
+bt   = ms.Backtester(md, ms.LinearCostModel(5.0))         # periods_per_year=52 for weekly
+res  = bt.run(sig, ms.DEFAULT_XS)
+m    = ms.metrics_from_result(res)                        # full metric Series
+cur  = ms.save_weights(res, "results/weights/xs_momentum", sectors=md.sectors)  # current book
+sweep = ms.turnover_penalty_sweep(md, sig, ms.DEFAULT_XS)  # turnover/Sharpe trade-off
+wf   = ms.WalkForwardValidator(bt, ms.DEFAULT_XS, {"top_pct":[0.1,0.2,0.3]}).run()
+fig, data = ms.plot_strategy_dashboard(res, md, sig, "XS", data_dir="results/figure_data")
+```
+
+Cost models: `LinearCostModel(bps)` (default 5 bps) and `SquareRootImpactModel`
+(Almgren-style `half_spread + k·σ·√(Q/ADV)`, AUM-parameterised for capacity).
+Turnover controls live in `StrategyConfig`: `no_trade_band`, `rank_buffer`,
+`trade_rate`. Weekly presets: `DEFAULT_XS_WEEKLY`, `DEFAULT_TS_WEEKLY`.
+
+## Implementation & publishing lag
+
+No look-ahead. iShares publishes holdings at ~T+1–2 days; the signal at month-end
+*t* uses only data through the **prior** snapshot (the `gap=1` skip), so positions
+are formed with a full period of buffer (publishing lag absorbed many times over)
+and vol-target leverage is causal (`.shift(1)`). `StrategyConfig.exec_lag` adds
+*extra* whole-period lag to stress-test timing: net Sharpe is essentially flat for
+the slow XS book (0.42 → 0.41 → 0.45 at +0/1/2 months) and decays only gracefully
+for the faster TS/weekly books — the signature of no timing artefact. See the
+notebook appendix and `results/figures/implementation_lag_robustness.png`.
+
+## Caveats
+
+Price-return only (no dividends); ETF-holding value used as a liquidity proxy (not
+true ADV); risk-free rate assumed 0; leverage up to 2× to hit the vol target.
+Framework-level research results — not a live trading recommendation.
