@@ -51,7 +51,7 @@ jupyter nbconvert --to notebook --execute --inplace momentum_research.ipynb
 # …or just open momentum_research.ipynb and Run All
 ```
 
-## The two strategies (both long-only, **no leverage**, ≤15% vol target)
+## The two strategies (both long-only, **no leverage**, 20% vol target)
 
 | | Cross-sectional (XS) | Time-series (TS) |
 |---|---|---|
@@ -60,8 +60,9 @@ jupyter nbconvert --to notebook --execute --inplace momentum_research.ipynb
 | Sizing | **equal-weight** (robust best; `signal` / `sweet_spot` tilts available) | breadth-scaled (cash when few trend up) |
 | Risk | vol-targeted, **`max_leverage=1`** (≤100% invested, de-risks to cash) | vol-targeted + automatic de-risking |
 
-Long-only with no borrowing: vol-targeting only ever scales *down* toward cash, so
-realised vol sits **at or below ~15%** (it can't lever up in calm regimes).
+Long-only with no borrowing: vol-targeting only ever scales *down* toward cash, and
+with the 20% target it stays fully invested unless forecast vol exceeds 20%. With no
+leverage it can't reach 20%, so **realised vol is ~15% (XS) / ~9% (TS)** — below target.
 
 Both use **risk-adjusted momentum** (trailing 12-1 return ÷ trailing vol).
 
@@ -87,15 +88,15 @@ with extreme winners reverting — the edge is mostly *avoiding losers*. See
 
 | | XS full | TS full | **XS OOS** | **TS OOS** | Benchmark |
 |---|---|---|---|---|---|
-| Sharpe | 0.43 | 0.55 | **0.76** | **0.69** | 0.60 |
-| Ann. vol | 13.1% | 8.8% | 12.2% | 8.4% | 15.6% |
-| CAGR | 4.9% | 4.5% | 8.9% | 5.6% | 8.5% |
-| Max drawdown | −44% | −18% | −18% | −19% | −53% |
-| Calmar | 0.11 | 0.25 | 0.51 | 0.29 | 0.16 |
+| Sharpe | 0.46 | 0.56 | **0.68** | **0.77** | 0.60 |
+| Ann. vol | 14.8% | 8.9% | 13.7% | 8.4% | 15.6% |
+| CAGR | 5.8% | 4.7% | 8.8% | 6.3% | 8.5% |
+| Max drawdown | −47% | −18% | −21% | −19% | −53% |
+| Calmar | 0.12 | 0.26 | 0.42 | 0.33 | 0.16 |
 
 *Long-only, no leverage (`max_leverage=1`), net of the realistic cost model (§3:
 FX 15bps gross + data-estimated spread + square-root impact, $100M AUM). OOS =
-stitched walk-forward out-of-sample.* Realised vols are below 15% because the book
+stitched walk-forward out-of-sample.* Realised vols are below the 20% target because the book
 can't lever up (only de-risk). The validated strategies still beat the cap-weighted
 index on risk-adjusted return, mainly through **drawdown control** — far shallower
 than the index's −53%. (FX dominates cost, so a held USD balance / net-FX recovers
@@ -140,8 +141,8 @@ costs):
 
 | net Sharpe | monthly | weekly | daily |
 |---|---|---|---|
-| XS | 0.81 (turn 2.9) | **1.32 (4.6)** | 1.03 (10.0) |
-| TS | 0.74 (1.0) | **1.07 (1.5)** | 0.93 (3.3) |
+| XS | 0.86 (turn 3.0) | **1.33 (4.6)** | 1.07 (10.3) |
+| TS | 0.75 (1.0) | **1.07 (1.5)** | 0.94 (3.3) |
 
 Higher frequency captured momentum's faster rotations on this recent bull sample —
 but **weekly is the sweet spot**: daily's edge is eroded by its ~12×/yr turnover and
