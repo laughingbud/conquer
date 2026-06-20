@@ -104,8 +104,8 @@ def build_signal(md: "MarketData", cfg: "StrategyConfig") -> pd.DataFrame:
     else:
         sig = momentum_signal(
             md.prices, cfg.lookback, cfg.gap, cfg.risk_adjusted, md.returns, cfg.vol_window)
-    sma_window = getattr(cfg, "sma_window", None)
-    if sma_window:
+    sma_window = cfg.sma_window
+    if sma_window is not None:
         sig = sig.where(trend_filter(md.prices, sma_window, cfg.gap))
     return sig
 
