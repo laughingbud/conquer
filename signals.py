@@ -77,8 +77,13 @@ def trend_filter(prices: pd.DataFrame, sma_window: int, gap: int = 1) -> pd.Data
 
 
 def trend_filtered_momentum(
-    prices: pd.DataFrame, returns: pd.DataFrame, lookback: int = 12, gap: int = 1,
-    sma_window: int = 9, risk_adjusted: bool = True, vol_window: Optional[int] = None,
+    prices: pd.DataFrame,
+    returns: Optional[pd.DataFrame] = None,
+    lookback: int = 12,
+    gap: int = 1,
+    sma_window: int = 9,
+    risk_adjusted: bool = True,
+    vol_window: Optional[int] = None,
 ) -> pd.DataFrame:
     """Cross-sectional momentum restricted to up-trending names (price above
     their ``sma_window`` SMA). Momentum is NaN for non-trending names, so the XS
