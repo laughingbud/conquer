@@ -66,15 +66,41 @@ def blended_momentum_signal(
     return sum(parts) / len(parts)
 
 
+def trend_filter(prices: pd.DataFrame, sma_window: int, gap: int = 1) -> pd.DataFrame:
+    """Boolean panel: True where price is above its ``sma_window`` simple moving
+    average, lagged by ``gap`` to match the momentum signal's information set
+    (no look-ahead). ``sma_window`` is in panel periods (months/weeks/days)."""
+    sma = prices.rolling(sma_window, min_periods=max(2, sma_window // 2)).mean()
+    return (prices > sma).shift(gap).fillna(False)
+
+
+def trend_filtered_momentum(
+    prices: pd.DataFrame, returns: pd.DataFrame, lookback: int = 12, gap: int = 1,
+    sma_window: int = 9, risk_adjusted: bool = True, vol_window: Optional[int] = None,
+) -> pd.DataFrame:
+    """Cross-sectional momentum restricted to up-trending names (price above
+    their ``sma_window`` SMA). Momentum is NaN for non-trending names, so the XS
+    selection ranks only trenders -- and the backtester goes to cash when too
+    few names trend (built-in de-risking)."""
+    mom = momentum_signal(prices, lookback, gap, risk_adjusted, returns, vol_window)
+    return mom.where(trend_filter(prices, sma_window, gap))
+
+
 def build_signal(md: "MarketData", cfg: "StrategyConfig") -> pd.DataFrame:
-    """Construct the signal panel implied by a :class:`StrategyConfig`."""
+    """Construct the signal panel implied by a :class:`StrategyConfig`.
+
+    If ``cfg.sma_window`` is set, the momentum signal is masked to names trading
+    above their SMA (trend-filtered momentum)."""
     if cfg.blend_lookbacks:
-        return blended_momentum_signal(
-            md.prices, md.returns, cfg.blend_lookbacks, cfg.gap, cfg.risk_adjusted
-        )
-    return momentum_signal(
-        md.prices, cfg.lookback, cfg.gap, cfg.risk_adjusted, md.returns, cfg.vol_window
-    )
+        sig = blended_momentum_signal(
+            md.prices, md.returns, cfg.blend_lookbacks, cfg.gap, cfg.risk_adjusted)
+    else:
+        sig = momentum_signal(
+            md.prices, cfg.lookback, cfg.gap, cfg.risk_adjusted, md.returns, cfg.vol_window)
+    sma_window = getattr(cfg, "sma_window", None)
+    if sma_window:
+        sig = sig.where(trend_filter(md.prices, sma_window, cfg.gap))
+    return sig
 
 
 def ic_by_horizon(

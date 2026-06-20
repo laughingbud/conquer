@@ -24,6 +24,7 @@ class StrategyConfig:
     risk_adjusted: bool = True       # divide trailing return by trailing vol
     vol_window: Optional[int] = None  # window for the risk-adjustment vol
     blend_lookbacks: Optional[Tuple[int, ...]] = None  # if set, blended signal
+    sma_window: Optional[int] = None  # if set, trend-filter to price > SMA(sma_window)
     top_pct: float = 0.20            # XS: fraction of universe held long
     ts_threshold: float = 0.0        # TS: hold names with signal above this
     ts_weighting: str = "breadth"    # TS: "breadth" (cash when few trend) or "selected"
@@ -379,7 +380,7 @@ class WalkForwardValidator:
         for gi, combo in enumerate(grid):
             cfg = self._cfg_with(combo)
             key = (cfg.lookback, cfg.gap, cfg.risk_adjusted, cfg.vol_window,
-                   cfg.blend_lookbacks)
+                   cfg.blend_lookbacks, cfg.sma_window)
             if key not in sig_cache:
                 sig_cache[key] = build_signal(md, cfg)
             res = self.bt.run(sig_cache[key], cfg)
