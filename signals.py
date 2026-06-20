@@ -70,6 +70,8 @@ def trend_filter(prices: pd.DataFrame, sma_window: int, gap: int = 1) -> pd.Data
     """Boolean panel: True where price is above its ``sma_window`` simple moving
     average, lagged by ``gap`` to match the momentum signal's information set
     (no look-ahead). ``sma_window`` is in panel periods (months/weeks/days)."""
+    if sma_window <= 0:
+        raise ValueError("sma_window must be positive")
     sma = prices.rolling(sma_window, min_periods=max(2, sma_window // 2)).mean()
     return (prices > sma).shift(gap).fillna(False)
 
