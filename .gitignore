@@ -1,13 +1,11 @@
 .DS_Store
 Archive/
 
-# Raw iShares snapshots (169MB, re-downloadable via DataLoader.download)
-data/ishares/
-data/wikipedia/
-data/*.pkl
-data/*.parquet
+# Raw data + caches (re-downloadable via DataLoader.download)
 
 # Python
 __pycache__/
 *.pyc
 .ipynb_checkpoints/
+
+data/

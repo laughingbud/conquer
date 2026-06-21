@@ -57,7 +57,7 @@ jupyter nbconvert --to notebook --execute --inplace momentum_research.ipynb
 |---|---|---|
 | Idea | *relative* strength | *absolute* / trend |
 | Selection | top `top_pct` by risk-adj momentum | names with own momentum > 0 |
-| Sizing | **equal-weight** (robust best; `signal` / `sweet_spot` tilts available) | breadth-scaled (cash when few trend up) |
+| Sizing | **equal-weight** (default; `signal` / `sweet_spot` available, compared OOS) | breadth-scaled (cash when few trend up) |
 | Risk | vol-targeted, **`max_leverage=1`** (≤100% invested, de-risks to cash) | vol-targeted + automatic de-risking |
 
 Long-only with no borrowing: vol-targeting only ever scales *down* toward cash, and
@@ -67,12 +67,11 @@ leverage it can't reach 20%, so **realised vol is ~15% (XS) / ~9% (TS)** — bel
 Both use **risk-adjusted momentum** (trailing 12-1 return ÷ trailing vol).
 
 **Cross-sectional weighting.** XS supports three within-book schemes via `weighting=`:
-`equal` (default), `signal` (∝ cross-sectional momentum rank), and `sweet_spot`
-(equal across the bulk, tapering the extreme winners). Tested at every frequency,
-**equal is the robust best** — `signal` drags monthly (the decile-10 reversal) and
-`sweet_spot` matches equal monthly but is worse + churns more weekly/daily. So the
-cross-sectional edge is the **selection** (holding the top quantile); within-book
-reweighting doesn't add value here. See `results/monthly/figures/xs_weight_schemes.png`.
+`equal` (the a-priori default), `signal` (∝ cross-sectional momentum rank), and
+`sweet_spot` (equal across the bulk, tapering the extreme winners). Equal vs signal
+is compared **out-of-sample** (separate walk-forward runs per sizing), not picked on
+the full sample: signal ≈ equal monthly and tends to win weekly. The cross-sectional
+edge is mainly the **selection** (holding the top quantile).
 
 ## Proving the IC
 
@@ -88,15 +87,16 @@ with extreme winners reverting — the edge is mostly *avoiding losers*. See
 
 | | XS full | TS full | **XS OOS** | **TS OOS** | Benchmark |
 |---|---|---|---|---|---|
-| Sharpe | 0.46 | 0.56 | **0.68** | **0.77** | 0.60 |
-| Ann. vol | 14.8% | 8.9% | 13.7% | 8.4% | 15.6% |
-| CAGR | 5.8% | 4.7% | 8.8% | 6.3% | 8.5% |
-| Max drawdown | −47% | −18% | −21% | −19% | −53% |
-| Calmar | 0.12 | 0.26 | 0.42 | 0.33 | 0.16 |
+| Sharpe | 0.46 | 0.56 | **0.74** | **0.70** | 0.60 |
+| Ann. vol | 14.8% | 8.9% | 13.6% | 8.2% | 15.6% |
+| CAGR | 5.8% | 4.7% | 9.5% | 5.6% | 8.5% |
+| Max drawdown | −47% | −18% | −20% | −19% | −53% |
+| Calmar | 0.12 | 0.26 | 0.48 | 0.29 | 0.16 |
 
 *Long-only, no leverage (`max_leverage=1`), net of the realistic cost model (§3:
 FX 15bps gross + data-estimated spread + square-root impact, $100M AUM). OOS =
-stitched walk-forward out-of-sample.* Realised vols are below the 20% target because the book
+stitched walk-forward out-of-sample, which selects **lookback, gap (incl. 0), and
+quantile/threshold per fold** — no parameter is chosen on the full sample.* Realised vols are below the 20% target because the book
 can't lever up (only de-risk). The validated strategies still beat the cap-weighted
 index on risk-adjusted return, mainly through **drawdown control** — far shallower
 than the index's −53%. (FX dominates cost, so a held USD balance / net-FX recovers

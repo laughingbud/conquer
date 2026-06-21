@@ -442,13 +442,17 @@ def save_weights(res: BacktestResult, path_prefix: str,
     long.columns = ["date", "ticker", "weight"]
     long.to_csv(f"{path_prefix}_weights_history.csv", index=False)
 
-    # current portfolio
+    # current portfolio -- sorted by weight (desc) then ticker (asc), so equal
+    # weights are broken alphabetically for a stable, readable book
     cur = res.current_weights()
     out = cur.rename("weight").to_frame()
     out["pct_of_invested"] = out["weight"] / out["weight"].sum()
     if sectors is not None:
         out["sector"] = sectors.reindex(out.index)
     out.index.name = "ticker"
+    out = (out.reset_index()
+              .sort_values(["weight", "ticker"], ascending=[False, True])
+              .set_index("ticker"))
     out.to_csv(f"{path_prefix}_latest_weights.csv")
     return cur
 

@@ -96,8 +96,16 @@ def trend_filtered_momentum(
 def build_signal(md: "MarketData", cfg: "StrategyConfig") -> pd.DataFrame:
     """Construct the signal panel implied by a :class:`StrategyConfig`.
 
-    If ``cfg.sma_window`` is set, the momentum signal is masked to names trading
-    above their SMA (trend-filtered momentum)."""
+    If ``cfg.sma_window`` is set, the momentum signal is trend-filtered to names
+    trading above their SMA. The masking differs by ``kind``:
+
+    * **xs** (cross-sectional) -- below-SMA names are set to NaN, so they drop out
+      of the universe entirely and the top quantile is taken among trenders only.
+    * **ts** (time-series) -- below-SMA names are set to a large-negative sentinel:
+      excluded by the ``> ts_threshold`` selection but still counted, so the TS
+      breadth (invested fraction) is measured against the *full* universe and the
+      book de-risks to cash when few names trend.
+    """
     if cfg.blend_lookbacks:
         sig = blended_momentum_signal(
             md.prices, md.returns, cfg.blend_lookbacks, cfg.gap, cfg.risk_adjusted)
@@ -106,7 +114,10 @@ def build_signal(md: "MarketData", cfg: "StrategyConfig") -> pd.DataFrame:
             md.prices, cfg.lookback, cfg.gap, cfg.risk_adjusted, md.returns, cfg.vol_window)
     sma_window = cfg.sma_window
     if sma_window is not None:
-        sig = sig.where(trend_filter(md.prices, sma_window, cfg.gap))
+        above = trend_filter(md.prices, sma_window, cfg.gap)
+        if getattr(cfg, "kind", "xs") == "ts":
+            sig = sig.mask((~above) & sig.notna(), -np.inf)
+            sig = sig.where(above)
     return sig
 
 
