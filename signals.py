@@ -116,8 +116,9 @@ def build_signal(md: "MarketData", cfg: "StrategyConfig") -> pd.DataFrame:
     if sma_window is not None:
         above = trend_filter(md.prices, sma_window, cfg.gap)
         if getattr(cfg, "kind", "xs") == "ts":
-            sig = sig.mask((~above) & sig.notna(), -np.inf)
-            sig = sig.where(above)
+            sig = sig.mask((~above) & sig.notna(), -np.inf)   # excluded but counted (breadth vs universe)
+        else:
+            sig = sig.where(above)                            # XS: top quantile of trenders only
     return sig
 
 
