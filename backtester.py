@@ -422,11 +422,35 @@ class WalkForwardValidator:
                                  param_grid=grid, periods_per_year=self.bt.periods_per_year)
 
 
+def select_latest_params(bt: "Backtester", base_cfg: StrategyConfig,
+                         param_grid: Dict[str, Sequence], train_periods: Optional[int] = None,
+                         objective: str = "Sharpe") -> Tuple[StrategyConfig, float, pd.DataFrame]:
+    """Choose the hyper-parameter combo that maximises ``objective`` over the most
+    recent ``train_periods`` of (causal) net returns -- i.e. what a walk-forward
+    would pick for the *next* live period, using only past data (no look-ahead).
+    This lets the live book *trade the validated process* rather than fixed params.
+    Returns ``(best_cfg, best_value, ranking)``; ``train_periods=None`` uses all history."""
+    keys = list(param_grid)
+    combos = [{}]
+    for k in keys:
+        combos = [dict(o, **{k: v}) for o in combos for v in param_grid[k]]
+    vals = []
+    for combo in combos:
+        cfg = StrategyConfig(**{**base_cfg.__dict__, **combo})
+        net = bt.run(build_signal(bt.md, cfg), cfg).net_returns.dropna()
+        seg = net.iloc[-train_periods:] if train_periods else net
+        vals.append(compute_metrics(seg, periods_per_year=bt.periods_per_year).get(objective, np.nan))
+    ranking = pd.DataFrame([{**c, objective: v} for c, v in zip(combos, vals)]
+                           ).sort_values(objective, ascending=False, ignore_index=True)
+    if not np.isfinite(vals).any():
+        return base_cfg, float("nan"), ranking
+    best = combos[int(np.nanargmax(vals))]
+    return StrategyConfig(**{**base_cfg.__dict__, **best}), float(np.nanmax(vals)), ranking
 
 
 # Long-only => max_leverage=1.0 (never borrow; vol-targeting only de-risks to cash,
-# so realised vol sits at or below the 15% target). XS is signal-weighted (weight
-# scales with cross-sectional momentum rank); TS is breadth/equal-weighted.
+# so realised vol sits at or below the 20% target). XS is equal-weighted by default
+# (signal/sweet_spot tilts available); TS is breadth/equal-weighted.
 DEFAULT_XS = StrategyConfig(kind="xs", lookback=12, gap=1, top_pct=0.20,
                             weighting="equal", target_vol=0.20, max_leverage=1.0)
 DEFAULT_TS = StrategyConfig(kind="ts", lookback=12, gap=1, ts_threshold=0.0,

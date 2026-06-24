@@ -73,7 +73,8 @@ def trend_filter(prices: pd.DataFrame, sma_window: int, gap: int = 1) -> pd.Data
     if sma_window <= 0:
         raise ValueError("sma_window must be positive")
     sma = prices.rolling(sma_window, min_periods=max(2, sma_window // 2)).mean()
-    return (prices > sma).shift(gap).fillna(False)
+    # shift before comparing -> clean boolean panel (NaN>NaN is False), no downcast
+    return prices.shift(gap) > sma.shift(gap)
 
 
 def trend_filtered_momentum(
