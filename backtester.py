@@ -118,6 +118,21 @@ class Backtester:
             if len(chosen) < 1:
                 return pd.Series(dtype=float), set()
             invest = len(chosen) / len(s) if cfg.ts_weighting == "breadth" else 1.0
+        elif cfg.kind == "ls":
+            # long-short dollar-neutral: long the top top_pct, short the bottom
+            # top_pct, each leg summing to +/-1 (gross 2, net 0). The vol-target
+            # multiplier then scales this book; gross leverage = 2 * multiplier.
+            n = len(s)
+            k = max(1, int(round(n * cfg.top_pct)))
+            longs, shorts = s.nlargest(k).index, s.nsmallest(k).index
+            w = pd.Series(0.0, index=s.index)
+            if cfg.weighting == "signal":
+                wl = s[longs].rank(); wl /= wl.sum()
+                ws = (-s[shorts]).rank(); ws /= ws.sum()
+                w[longs], w[shorts] = wl.values, -ws.values
+            else:
+                w[longs], w[shorts] = 1.0 / k, -1.0 / k
+            return w, set(longs) | set(shorts)
         else:
             raise ValueError(cfg.kind)
         if cfg.weighting == "signal":
@@ -218,7 +233,7 @@ class Backtester:
                 mktcap=md.mktcap.loc[t] if t in md.mktcap.index else None,
                 name_vol=self._name_vol.loc[t] if t in self._name_vol.index else None,
             )
-            real_lev.loc[t] = held.sum()
+            real_lev.loc[t] = held.abs().sum()   # gross exposure (= net for long-only; ~2x for L/S)
             held_panel[t] = held
 
             r = fwd.loc[t].reindex(held.index).fillna(0.0)
